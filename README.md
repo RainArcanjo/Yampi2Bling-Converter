@@ -1,41 +1,69 @@
-<<<<<<< HEAD
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Conversor Yampi ➜ Bling  
+Ferramenta web desenvolvida em **Next.js + React** para converter o relatório CSV da plataforma **Yampi** em uma **planilha Excel pronta para importação no Bling ERP**.
 
-## Getting Started
+Além do conversor, o sistema fornece:
 
-First, run the development server:
+- Resumo financeiro dos pedidos  
+- Picking List (lista de separação) para impressão  
+- Visualização do JSON processado  
+- Backup dos dados  
+- Geração automática do Excel (.xls) seguindo o padrão do Bling  
 
+---
+
+## 🚀 Tecnologias Utilizadas
+
+- **Next.js 14 (App Router)**
+- **React + Hooks**
+- **TailwindCSS**
+- **XLSX.js** (conversão para Excel)
+- **TypeScript / JavaScript**
+- **Vercel hosting** (opcional)
+- **Git & GitHub**
+
+---
+
+## 📌 Funcionalidades Principais
+
+### ✔️ Upload do CSV da Yampi  
+Aceita arquivos `.csv` exportados do painel Yampi.
+
+### ✔️ Conversão automática dos dados  
+O sistema:
+
+- Normaliza o CSV  
+- Converte para JSON  
+- Identifica SKU e preço de acordo com o produto (kits 5, 10, 15, 20 unidades)  
+- Gera contadores e resumo financeiro  
+- Calcula frete, desconto e total do pedido  
+- Mapeia automaticamente Estados → UF  
+- Prepara tudo no formato exigido pelo Bling
+
+### ✔️ Geração da planilha Excel (.xls)  
+Inclui colunas específicas do Bling como:
+
+- Dados do cliente  
+- Endereço  
+- Produto  
+- SKU  
+- Valor unitário  
+- Valor total  
+- Transporte  
+- Data prevista  
+- Forma de pagamento  
+- Etc.
+
+### ✔️ Picking List (Lista de Separação)
+Gerada automaticamente e pronta para impressão (modo printer-friendly).
+
+### ✔️ Visualização Técnica (JSON)
+Permite auditar todo o processamento.
+
+---
+
+# 🛠️ Como rodar o projeto localmente
+
+### 1. Clone o repositório
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-=======
-# Yampi2Bling-Converter
-Uma ferramenta de importação de pedidos pagos no Yampi para serem importados como planilha de venda no Bling ERP.
->>>>>>> d0af8f56a84b9f9e49be100edbb3a4502a9a9b2b
+git clone https://github.com/seu-usuario/seu-repo.git
+cd seu-repo
