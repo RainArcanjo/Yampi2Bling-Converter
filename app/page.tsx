@@ -1,5 +1,5 @@
 "use client";
-import { useState, ChangeEvent, useMemo } from 'react';
+import { useState, ChangeEvent, useMemo, useEffect } from 'react'; // Adicionado useEffect
 import * as XLSX from 'xlsx';
 
 // --- CONFIGURAÇÕES ---
@@ -22,8 +22,18 @@ export default function YampiConverter() {
   const [copied, setCopied] = useState(false);
   const [freteCalculado, setFreteCalculado] = useState(false);
   
-  // NOVO: Estado do Tema (Começa como true = Escuro)
-  const [darkMode, setDarkMode] = useState(true);
+  // MUDANÇA 1: Começa como FALSE (Light Mode por padrão)
+  const [darkMode, setDarkMode] = useState(false);
+
+  // MUDANÇA 2: Carregar preferência salva ao iniciar
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'dark') {
+      setDarkMode(true);
+    } else {
+      setDarkMode(false);
+    }
+  }, []);
 
   // --- LEITURA DO ARQUIVO ---
   const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
@@ -96,15 +106,29 @@ export default function YampiConverter() {
     return { sku: skuOriginal, preco: 0.00, nome: "Outros" };
   };
 
+  // --- MAPEAMENTO COMPLETO DE ESTADOS (UFs) ---
   const getUF = (estado: string) => {
+    if (!estado) return "";
+    const cleanState = estado.trim();
+    
     const map: Record<string, string> = {
-      "Sao Paulo": "SP", "São Paulo": "SP", "Rio de Janeiro": "RJ", "Minas Gerais": "MG",
-      "Espirito Santo": "ES", "Espírito Santo": "ES", "Rio Grande do Sul": "RS",
-      "Parana": "PR", "Paraná": "PR", "Santa Catarina": "SC", "Bahia": "BA",
-      "Distrito Federal": "DF", "Goias": "GO", "Goiás": "GO", "Ceara": "CE", "Ceará": "CE",
-      "Pernambuco": "PE", "Amazonas": "AM"
+      // Norte
+      "Acre": "AC", "Amapa": "AP", "Amapá": "AP", "Amazonas": "AM", "Para": "PA", "Pará": "PA",
+      "Rondonia": "RO", "Rondônia": "RO", "Roraima": "RR", "Tocantins": "TO",
+      // Nordeste
+      "Alagoas": "AL", "Bahia": "BA", "Ceara": "CE", "Ceará": "CE", "Maranhao": "MA", "Maranhão": "MA",
+      "Paraiba": "PB", "Paraíba": "PB", "Pernambuco": "PE", "Piaui": "PI", "Piauí": "PI",
+      "Rio Grande do Norte": "RN", "Sergipe": "SE",
+      // Centro-Oeste
+      "Distrito Federal": "DF", "Goias": "GO", "Goiás": "GO", "Mato Grosso": "MT", "Mato Grosso do Sul": "MS",
+      // Sudeste
+      "Espirito Santo": "ES", "Espírito Santo": "ES", "Minas Gerais": "MG", "Rio de Janeiro": "RJ",
+      "Sao Paulo": "SP", "São Paulo": "SP",
+      // Sul
+      "Parana": "PR", "Paraná": "PR", "Rio Grande do Sul": "RS", "Santa Catarina": "SC"
     };
-    return map[estado] || estado.substring(0, 2).toUpperCase();
+
+    return map[cleanState] || cleanState.substring(0, 2).toUpperCase();
   };
 
   // --- INTEGRAÇÃO FRENET ---
@@ -154,14 +178,8 @@ export default function YampiConverter() {
 
             if (data.ShippingSevicesArray && data.ShippingSevicesArray.length > 0) {
                 const opcoesValidas = data.ShippingSevicesArray.filter((s: any) => !s.Error);
-                
-                // Ordenar por preço
                 opcoesValidas.sort((a: any, b: any) => parseFloat(a.ShippingPrice) - parseFloat(b.ShippingPrice));
-                
-                // Salvar TODAS as opções no objeto
                 novosDados[i].opcoes_frete = opcoesValidas;
-                
-                // Pré-selecionar o mais barato
                 if (opcoesValidas.length > 0) {
                     novosDados[i].frete_selecionado = opcoesValidas[0];
                 }
@@ -190,9 +208,18 @@ export default function YampiConverter() {
 
   // --- ESTATÍSTICAS ---
   const stats = useMemo(() => {
-    if (!jsonObject.length) return { totalPedidos: 0, valorTotal: 0, kits: {} as Record<string, number> };
+    if (!jsonObject.length) return { 
+        totalPedidos: 0, 
+        valorProdutos: 0, 
+        valorFrete: 0, 
+        valorTotal: 0, 
+        kits: {} as Record<string, number> 
+    };
 
-    let soma = 0;
+    let somaProdutos = 0;
+    let somaFrete = 0;
+    let somaTotal = 0;
+
     const kitsCount: Record<string, number> = {
       "Kit 5 Panos": 0, "Kit 10 Panos": 0, "Kit 15 Panos": 0, "Kit 20 Panos": 0, "Outros": 0
     };
@@ -209,8 +236,14 @@ export default function YampiConverter() {
       }
       
       const desconto = parseFloat(item.total_desconto?.replace(',', '.') || "0");
-      const totalItem = (preco * qtd) + frete - desconto;
-      soma += totalItem;
+      
+      // Cálculos
+      const totalProdutosItem = (preco * qtd);
+      somaProdutos += totalProdutosItem;
+      somaFrete += frete;
+      
+      const totalItem = totalProdutosItem + frete - desconto;
+      somaTotal += totalItem;
 
       if (kitsCount[nome] !== undefined) kitsCount[nome] += qtd;
       else kitsCount["Outros"] += qtd;
@@ -218,7 +251,9 @@ export default function YampiConverter() {
 
     return {
       totalPedidos: jsonObject.length,
-      valorTotal: soma,
+      valorProdutos: somaProdutos,
+      valorFrete: somaFrete,
+      valorTotal: somaTotal,
       kits: kitsCount
     };
   }, [jsonObject]);
@@ -329,7 +364,12 @@ export default function YampiConverter() {
     window.print();
   };
 
-  const toggleTheme = () => setDarkMode(!darkMode);
+  // MUDANÇA 3: Função de Toggle salvando no localStorage
+  const toggleTheme = () => {
+    const newTheme = !darkMode;
+    setDarkMode(newTheme);
+    localStorage.setItem('theme', newTheme ? 'dark' : 'light');
+  };
 
   // --- VARIAVEIS DE ESTILO (THEME) ---
   const bgMain = darkMode ? "bg-gray-950" : "bg-gray-100";
@@ -438,17 +478,33 @@ export default function YampiConverter() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                  {/* Card Financeiro */}
                  <div className={`rounded-xl border p-4 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200 shadow-sm'}`}>
-                    <h3 className={`${textMuted} text-xs uppercase font-bold mb-2`}>Resumo do Pedido</h3>
-                    <div className="flex justify-between items-end">
+                    <h3 className={`${textMuted} text-xs uppercase font-bold mb-3 border-b border-gray-600/30 pb-2`}>Resumo Financeiro</h3>
+                    <div className="grid grid-cols-2 gap-4">
                        <div>
-                          <p className={`text-3xl font-bold ${textMain}`}>{stats.totalPedidos}</p>
-                          <p className={`text-xs ${textMuted}`}>Pedidos</p>
+                          <p className={`text-xs ${textMuted}`}>Produtos</p>
+                          <p className={`text-lg font-bold ${textMain}`}>
+                             {stats.valorProdutos.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                          </p>
                        </div>
                        <div className="text-right">
-                          <p className="text-2xl font-bold text-green-500">
-                             {stats.valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                          <p className={`text-xs ${textMuted}`}>Frete Total</p>
+                          <p className={`text-lg font-bold ${textMain}`}>
+                             {stats.valorFrete.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                           </p>
-                          <p className={`text-xs ${textMuted}`}>Total (c/ Frete)</p>
+                       </div>
+                       <div className="col-span-2 border-t pt-2 mt-1 border-gray-600/30">
+                          <div className="flex justify-between items-end">
+                             <div>
+                                <p className={`text-xs ${textMuted}`}>Total Pedidos</p>
+                                <p className={`text-sm font-bold ${textMain}`}>{stats.totalPedidos}</p>
+                             </div>
+                             <div className="text-right">
+                                <p className={`text-xs ${textMuted}`}>Total Geral</p>
+                                <p className="text-2xl font-bold text-green-500">
+                                   {stats.valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                </p>
+                             </div>
+                          </div>
                        </div>
                     </div>
                  </div>
