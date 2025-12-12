@@ -5,7 +5,6 @@ import * as XLSX from 'xlsx';
 export default function YampiConverter() {
   const [jsonOutput, setJsonOutput] = useState<string | null>(null);
   const [jsonObject, setJsonObject] = useState<any[]>([]);
-  // AQUI ESTÁ A VARIÁVEL (Note o N maiúsculo)
   const [fileName, setFileName] = useState(''); 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -16,7 +15,6 @@ export default function YampiConverter() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Salva o nome do arquivo original (fileName)
     setFileName(file.name.replace('.csv', ''));
     setLoading(true);
     setError('');
@@ -89,13 +87,17 @@ export default function YampiConverter() {
     return map[estado] || estado.substring(0, 2).toUpperCase();
   };
 
-  const getProdutoBling = (nomeProduto: string) => {
-    const nome = nomeProduto.toUpperCase();
-    if (nome.includes("5PCS") || nome.includes("5 PCS")) return { sku: "566-PVLC", preco: 14.10, nome: "Kit 5 Panos" };
-    if (nome.includes("10PCS") || nome.includes("10 PCS")) return { sku: "567-PVLC", preco: 25.90, nome: "Kit 10 Panos" };
-    if (nome.includes("15PCS") || nome.includes("15 PCS")) return { sku: "568-PVLC", preco: 37.70, nome: "Kit 15 Panos" };
-    if (nome.includes("20PCS") || nome.includes("20 PCS")) return { sku: "569-PVLC", preco: 49.50, nome: "Kit 20 Panos" };
-    return { sku: "ERRO-SKU", preco: 0.00, nome: "Outros" };
+  // ATUALIZADO: Agora verifica pelo SKU exato vindo da Yampi
+  const getProdutoBling = (skuOriginal: string) => {
+    const sku = skuOriginal ? skuOriginal.trim().toUpperCase() : "";
+
+    if (sku === "566-PVLC") return { sku: "566-PVLC", preco: 14.10, nome: "Kit 5 Panos" };
+    if (sku === "567-PVLC") return { sku: "567-PVLC", preco: 25.90, nome: "Kit 10 Panos" };
+    if (sku === "568-PVLC") return { sku: "568-PVLC", preco: 37.70, nome: "Kit 15 Panos" };
+    if (sku === "569-PVLC") return { sku: "569-PVLC", preco: 49.50, nome: "Kit 20 Panos" };
+    
+    // Caso não encontre, retorna como "Outros" mas mantendo o SKU original
+    return { sku: skuOriginal, preco: 0.00, nome: "Outros" };
   };
 
   const stats = useMemo(() => {
@@ -111,7 +113,9 @@ export default function YampiConverter() {
     };
 
     jsonObject.forEach(item => {
-      const { preco, nome } = getProdutoBling(item.produto);
+      // Passamos o SKU (item.sku) em vez do nome do produto
+      const { preco, nome } = getProdutoBling(item.sku);
+      
       const qtd = parseFloat(item.quantidade.replace(',', '.')) || 1;
       const frete = parseFloat(item.total_frete?.replace(',', '.') || "0");
       const desconto = parseFloat(item.total_desconto?.replace(',', '.') || "0");
@@ -145,11 +149,12 @@ export default function YampiConverter() {
     const ano = hoje.getFullYear();
     const dataArquivo = `${dia}-${mes}-${ano}`;
     
-    // Nome do arquivo usando Data + Quantidade Pedidos
     const nomeFinal = `Importacao_Bling_${dataArquivo}_${jsonObject.length}_pedidos.xls`;
 
     const dadosBling = jsonObject.map(item => {
-      const { sku, preco } = getProdutoBling(item.produto);
+      // Passamos o SKU (item.sku) para a lógica
+      const { sku, preco } = getProdutoBling(item.sku);
+
       const qtd = parseFloat(item.quantidade.replace(',', '.')) || 1;
       const frete = parseFloat(item.total_frete?.replace(',', '.') || "0");
       const desconto = parseFloat(item.total_desconto?.replace(',', '.') || "0");
@@ -174,7 +179,7 @@ export default function YampiConverter() {
         "Celular Comprador": item.cliente_telefone,
         "E-mail Comprador": item.cliente_email,
         "Produto": item.produto,
-        "SKU": sku,
+        "SKU": sku, // SKU correto vindo da função
         "Un": "KIT",
         "Quantidade": qtd,
         "Valor Unitário": preco,      
@@ -214,7 +219,6 @@ export default function YampiConverter() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    // Aqui usamos uma string fixa para o backup, para evitar erros
     a.download = `backup_dados.json`;
     document.body.appendChild(a);
     a.click();
@@ -315,7 +319,6 @@ export default function YampiConverter() {
             <label className="group relative flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-600 rounded-xl cursor-pointer bg-gray-800/50 hover:bg-gray-800 hover:border-blue-500 transition-all duration-300">
               <div className="flex flex-col items-center justify-center pt-5 pb-6">
                 <span className="text-3xl mb-2">📂</span>
-                {/* Aqui está o uso correto da variável fileName */}
                 <p className="text-sm text-gray-400">
                   {fileName ? `Arquivo selecionado: ${fileName}` : "Arraste o CSV da Yampi aqui"}
                 </p>
