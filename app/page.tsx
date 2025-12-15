@@ -1,5 +1,5 @@
 "use client";
-import { useState, ChangeEvent, useMemo, useEffect } from 'react'; // Adicionado useEffect
+import { useState, ChangeEvent, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 
 // --- CONFIGURAÇÕES ---
@@ -21,26 +21,20 @@ export default function YampiConverter() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [freteCalculado, setFreteCalculado] = useState(false);
-  
-  // MUDANÇA 1: Começa como FALSE (Light Mode por padrão)
   const [darkMode, setDarkMode] = useState(false);
 
-  // MUDANÇA 2: Carregar preferência salva ao iniciar
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme');
-    if (savedTheme === 'dark') {
-      setDarkMode(true);
-    } else {
-      setDarkMode(false);
-    }
+    if (savedTheme === 'dark') setDarkMode(true);
+    else setDarkMode(false);
   }, []);
 
-  // --- LEITURA DO ARQUIVO ---
+  // --- LÓGICA DE LEITURA (XLSX INPUT) ---
   const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setFileName(file.name.replace('.csv', ''));
+    setFileName(file.name.replace(/\.[^/.]+$/, ""));
     setLoading(true);
     setError('');
     setJsonOutput(null);
@@ -49,51 +43,94 @@ export default function YampiConverter() {
     setFreteCalculado(false);
 
     const reader = new FileReader();
+    reader.readAsArrayBuffer(file);
+    
     reader.onload = (event) => {
       try {
-        const csvContent = event.target?.result as string;
-        const jsonData = converterCsvParaJson(csvContent);
-        setJsonObject(jsonData);
-        setJsonOutput(JSON.stringify(jsonData, null, 4));
+        const data = new Uint8Array(event.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        
+        // Converte para JSON bruto (defval: "" garante que células vazias não quebrem)
+        const rawData = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+        if (rawData.length === 0) {
+            setError("A planilha parece estar vazia.");
+            setLoading(false);
+            return;
+        }
+
+        const normalizedData = processarDadosXLSX(rawData);
+        setJsonObject(normalizedData);
+        setJsonOutput(JSON.stringify(normalizedData, null, 4));
       } catch (err) {
         console.error(err);
-        setError("Erro ao processar o arquivo.");
+        setError("Erro ao processar o arquivo Excel. Verifique o formato.");
       } finally {
         setLoading(false);
       }
     };
-    reader.readAsText(file);
   };
 
-  const converterCsvParaJson = (csv: string) => {
-    const linhas = csv.trim().split('\n');
-    let cabecalhoRaw = linhas[0].trim();
-    if (cabecalhoRaw.endsWith(';')) cabecalhoRaw = cabecalhoRaw.slice(0, -1);
-    const headers = cabecalhoRaw.split(',');
-    headers.splice(14, 0, "id_variante");
+  // Função auxiliar para encontrar coluna por vários nomes possíveis
+  const encontrarValor = (row: any, possiveisNomes: string[]) => {
+      // Normaliza as chaves da linha para minúsculo para comparar
+      const chavesLinha = Object.keys(row).reduce((acc, k) => {
+          acc[k.toLowerCase().trim()] = row[k];
+          return acc;
+      }, {} as any);
 
-    const resultado: any[] = [];
-    for (let i = 1; i < linhas.length; i++) {
-      const linha = linhas[i].trim();
-      if (!linha) continue;
-      const partes = linha.split(';');
-      const partesLimpas: string[] = [];
-      partes.forEach(p => {
-        let limpo = p;
-        if (limpo.startsWith('"') && limpo.endsWith('"')) limpo = limpo.slice(1, -1);
-        limpo = limpo.replace(/""/g, '"');
-        partesLimpas.push(limpo);
-      });
-      const linhaNormalizada = partesLimpas.join(',');
-      const regexCSV = /,(?=(?:(?:[^"]*"){2})*[^"]*$)/;
-      const valores = linhaNormalizada.split(regexCSV).map(val => val.replace(/^"|"$/g, '').trim());
-      const obj: any = {};
-      headers.forEach((header, index) => {
-        obj[header] = valores[index] || "";
-      });
-      resultado.push(obj);
-    }
-    return resultado;
+      for (const nome of possiveisNomes) {
+          const valor = chavesLinha[nome.toLowerCase().trim()];
+          if (valor !== undefined && valor !== "") {
+              return String(valor).trim();
+          }
+      }
+      return "";
+  };
+
+  const processarDadosXLSX = (data: any[]) => {
+    return data.map((row: any) => {
+      return {
+        // Tenta achar pelos nomes do BLING ou da YAMPI ou nomes comuns
+        id: encontrarValor(row, ['Nr Pedido', 'id', 'numero_pedido', 'Pedido']),
+        
+        data: encontrarValor(row, ['Data da Venda', 'data', 'Data']),
+        
+        cliente: encontrarValor(row, ['Nome Comprador', 'cliente', 'Nome', 'Nome do Cliente']),
+        cliente_document: encontrarValor(row, ['CPF/CNPJ Comprador', 'cliente_document', 'CPF', 'CNPJ']),
+        cliente_email: encontrarValor(row, ['E-mail Comprador', 'cliente_email', 'Email']),
+        cliente_telefone: encontrarValor(row, ['Celular Comprador', 'Telefone Comprador', 'cliente_telefone', 'Celular']),
+        
+        // Endereço
+        entrega_rua: encontrarValor(row, ['Endereço Entrega', 'Endereço Comprador', 'entrega_rua', 'Rua']),
+        entrega_numero: encontrarValor(row, ['Número Entrega', 'Número Comprador', 'entrega_numero', 'Numero']),
+        entrega_complemento: encontrarValor(row, ['Complemento Entrega', 'entrega_complemento', 'Complemento']),
+        entrega_bairro: encontrarValor(row, ['Bairro Entrega', 'Bairro Comprador', 'entrega_bairro', 'Bairro']),
+        entrega_cidade: encontrarValor(row, ['Cidade Entrega', 'Cidade Comprador', 'entrega_cidade', 'Cidade']),
+        entrega_estado: encontrarValor(row, ['UF Entrega', 'UF Comprador', 'entrega_estado', 'UF', 'Estado']),
+        entrega_cep: encontrarValor(row, ['CEP Entrega', 'CEP Comprador', 'entrega_cep', 'CEP']),
+
+        // Produto
+        produto: encontrarValor(row, ['Produto', 'produto', 'Nome do Produto']),
+        sku: encontrarValor(row, ['SKU', 'sku', 'Código']),
+        quantidade: encontrarValor(row, ['Quantidade', 'quantidade', 'Qtd']) || "1",
+
+        // Financeiro
+        total_frete: encontrarValor(row, ['Valor Frete Pedido', 'total_frete', 'Frete']) || "0",
+        total_pago: encontrarValor(row, ['Total Pedido', 'total_pago', 'Total']) || "0",
+        total_desconto: encontrarValor(row, ['Valor Desconto Pedido', 'total_desconto', 'Desconto']) || "0",
+
+        // Logística
+        entrega: encontrarValor(row, ['Trasportadora', 'Transportadora', 'entrega']) || "Padrao",
+        
+        // Extras
+        pagamento: encontrarValor(row, ['Método Pagamento', 'pagamento', 'Forma Pagamento']) || "Não Informado",
+        parcelamento: encontrarValor(row, ['Qtd Parcela', 'parcelamento']) || "1"
+      };
+    });
   };
 
   // --- LÓGICA DE PRODUTO ---
@@ -106,28 +143,21 @@ export default function YampiConverter() {
     return { sku: skuOriginal, preco: 0.00, nome: "Outros" };
   };
 
-  // --- MAPEAMENTO COMPLETO DE ESTADOS (UFs) ---
+  // --- MAPEAMENTO DE ESTADOS ---
   const getUF = (estado: string) => {
     if (!estado) return "";
     const cleanState = estado.trim();
-    
     const map: Record<string, string> = {
-      // Norte
       "Acre": "AC", "Amapa": "AP", "Amapá": "AP", "Amazonas": "AM", "Para": "PA", "Pará": "PA",
       "Rondonia": "RO", "Rondônia": "RO", "Roraima": "RR", "Tocantins": "TO",
-      // Nordeste
       "Alagoas": "AL", "Bahia": "BA", "Ceara": "CE", "Ceará": "CE", "Maranhao": "MA", "Maranhão": "MA",
       "Paraiba": "PB", "Paraíba": "PB", "Pernambuco": "PE", "Piaui": "PI", "Piauí": "PI",
       "Rio Grande do Norte": "RN", "Sergipe": "SE",
-      // Centro-Oeste
       "Distrito Federal": "DF", "Goias": "GO", "Goiás": "GO", "Mato Grosso": "MT", "Mato Grosso do Sul": "MS",
-      // Sudeste
       "Espirito Santo": "ES", "Espírito Santo": "ES", "Minas Gerais": "MG", "Rio de Janeiro": "RJ",
       "Sao Paulo": "SP", "São Paulo": "SP",
-      // Sul
       "Parana": "PR", "Paraná": "PR", "Rio Grande do Sul": "RS", "Santa Catarina": "SC"
     };
-
     return map[cleanState] || cleanState.substring(0, 2).toUpperCase();
   };
 
@@ -136,7 +166,6 @@ export default function YampiConverter() {
     if (jsonObject.length === 0) return;
     setQuoting(true);
     setError('');
-    
     const novosDados = [...jsonObject];
     let processados = 0;
 
@@ -144,7 +173,12 @@ export default function YampiConverter() {
         const item = novosDados[i];
         const { nome, preco } = getProdutoBling(item.sku);
         const medidas = MEDIDAS_KITS[nome] || MEDIDAS_KITS["Outros"];
-        const qtd = parseFloat(item.quantidade.replace(',', '.')) || 1;
+        
+        // Correção para ler números do Excel corretamente
+        let qtd = 1;
+        if(typeof item.quantidade === 'string') qtd = parseFloat(item.quantidade.replace(',', '.'));
+        else if(typeof item.quantidade === 'number') qtd = item.quantidade;
+
         const valorNota = preco * qtd;
         const cepDestino = item.entrega_cep.replace(/\D/g, '');
 
@@ -175,7 +209,6 @@ export default function YampiConverter() {
             });
 
             const data = await res.json();
-
             if (data.ShippingSevicesArray && data.ShippingSevicesArray.length > 0) {
                 const opcoesValidas = data.ShippingSevicesArray.filter((s: any) => !s.Error);
                 opcoesValidas.sort((a: any, b: any) => parseFloat(a.ShippingPrice) - parseFloat(b.ShippingPrice));
@@ -187,12 +220,10 @@ export default function YampiConverter() {
         } catch (err) {
             console.error("Erro cotação", err);
         }
-
         processados++;
         setQuoteProgress(Math.round((processados / novosDados.length) * 100));
         await new Promise(r => setTimeout(r, 100)); 
     }
-
     setJsonObject(novosDados);
     setQuoting(false);
     setFreteCalculado(true);
@@ -208,40 +239,36 @@ export default function YampiConverter() {
 
   // --- ESTATÍSTICAS ---
   const stats = useMemo(() => {
-    if (!jsonObject.length) return { 
-        totalPedidos: 0, 
-        valorProdutos: 0, 
-        valorFrete: 0, 
-        valorTotal: 0, 
-        kits: {} as Record<string, number> 
-    };
+    if (!jsonObject.length) return { totalPedidos: 0, valorProdutos: 0, valorFrete: 0, valorTotal: 0, kits: {} as Record<string, number> };
 
     let somaProdutos = 0;
     let somaFrete = 0;
     let somaTotal = 0;
-
-    const kitsCount: Record<string, number> = {
-      "Kit 5 Panos": 0, "Kit 10 Panos": 0, "Kit 15 Panos": 0, "Kit 20 Panos": 0, "Outros": 0
-    };
+    const kitsCount: Record<string, number> = { "Kit 5 Panos": 0, "Kit 10 Panos": 0, "Kit 15 Panos": 0, "Kit 20 Panos": 0, "Outros": 0 };
 
     jsonObject.forEach(item => {
       const { preco, nome } = getProdutoBling(item.sku);
-      const qtd = parseFloat(item.quantidade.replace(',', '.')) || 1;
+      
+      let qtd = 1;
+      if(typeof item.quantidade === 'string') qtd = parseFloat(item.quantidade.replace(',', '.'));
+      else if(typeof item.quantidade === 'number') qtd = item.quantidade;
       
       let frete = 0;
       if (item.frete_selecionado) {
           frete = parseFloat(item.frete_selecionado.ShippingPrice);
       } else {
-          frete = parseFloat(item.total_frete?.replace(',', '.') || "0");
+          // Trata frete vindo do Excel (pode ser numero ou string com virgula)
+          if(typeof item.total_frete === 'number') frete = item.total_frete;
+          else frete = parseFloat(item.total_frete.toString().replace(',', '.') || "0");
       }
       
-      const desconto = parseFloat(item.total_desconto?.replace(',', '.') || "0");
+      let desconto = 0;
+      if(typeof item.total_desconto === 'number') desconto = item.total_desconto;
+      else desconto = parseFloat(item.total_desconto.toString().replace(',', '.') || "0");
       
-      // Cálculos
       const totalProdutosItem = (preco * qtd);
       somaProdutos += totalProdutosItem;
       somaFrete += frete;
-      
       const totalItem = totalProdutosItem + frete - desconto;
       somaTotal += totalItem;
 
@@ -249,13 +276,7 @@ export default function YampiConverter() {
       else kitsCount["Outros"] += qtd;
     });
 
-    return {
-      totalPedidos: jsonObject.length,
-      valorProdutos: somaProdutos,
-      valorFrete: somaFrete,
-      valorTotal: somaTotal,
-      kits: kitsCount
-    };
+    return { totalPedidos: jsonObject.length, valorProdutos: somaProdutos, valorFrete: somaFrete, valorTotal: somaTotal, kits: kitsCount };
   }, [jsonObject]);
 
   // --- GERAÇÃO XLS ---
@@ -273,8 +294,14 @@ export default function YampiConverter() {
 
     const dadosBling = jsonObject.map(item => {
       const { sku, preco } = getProdutoBling(item.sku);
-      const qtd = parseFloat(item.quantidade.replace(',', '.')) || 1;
-      const desconto = parseFloat(item.total_desconto?.replace(',', '.') || "0");
+      
+      let qtd = 1;
+      if(typeof item.quantidade === 'string') qtd = parseFloat(item.quantidade.replace(',', '.'));
+      else if(typeof item.quantidade === 'number') qtd = item.quantidade;
+
+      let desconto = 0;
+      if(typeof item.total_desconto === 'number') desconto = item.total_desconto;
+      else desconto = parseFloat(item.total_desconto.toString().replace(',', '.') || "0");
       
       let freteFinal = 0;
       let transportadoraFinal = item.entrega; 
@@ -283,7 +310,8 @@ export default function YampiConverter() {
           freteFinal = parseFloat(item.frete_selecionado.ShippingPrice);
           transportadoraFinal = `${item.frete_selecionado.Carrier} (${item.frete_selecionado.ServiceDescription})`;
       } else {
-          freteFinal = parseFloat(item.total_frete?.replace(',', '.') || "0");
+          if(typeof item.total_frete === 'number') freteFinal = item.total_frete;
+          else freteFinal = parseFloat(item.total_frete.toString().replace(',', '.') || "0");
       }
       
       const valorTotalLinha = preco * qtd; 
@@ -364,14 +392,13 @@ export default function YampiConverter() {
     window.print();
   };
 
-  // MUDANÇA 3: Função de Toggle salvando no localStorage
   const toggleTheme = () => {
     const newTheme = !darkMode;
     setDarkMode(newTheme);
     localStorage.setItem('theme', newTheme ? 'dark' : 'light');
   };
 
-  // --- VARIAVEIS DE ESTILO (THEME) ---
+  // --- VARIAVEIS DE ESTILO ---
   const bgMain = darkMode ? "bg-gray-950" : "bg-gray-100";
   const textMain = darkMode ? "text-white" : "text-gray-900";
   const textMuted = darkMode ? "text-gray-400" : "text-gray-600";
@@ -399,7 +426,7 @@ export default function YampiConverter() {
         @media print { .print-only { display: block; } }
       `}</style>
 
-      {/* ÁREA DE IMPRESSÃO (Picking List) */}
+      {/* ÁREA DE IMPRESSÃO */}
       <div id="print-section" className="print-only">
         <h2 style={{textAlign: 'center', fontSize: '18px', fontWeight: 'bold', borderBottom: '2px solid black', paddingBottom: '5px'}}>
           RELATÓRIO DE SEPARAÇÃO
@@ -434,13 +461,9 @@ export default function YampiConverter() {
       {/* INTERFACE DO USUÁRIO */}
       <div className={`min-h-screen flex flex-col items-center justify-start p-6 font-sans no-print transition-colors duration-300 ${bgMain} ${textMain}`}>
         
-        {/* BOTÃO THEME TOGGLE */}
+        {/* THEME TOGGLE */}
         <div className="absolute top-6 right-6 z-50">
-           <button 
-             onClick={toggleTheme} 
-             className={`p-3 rounded-full transition-all shadow-lg ${darkMode ? 'bg-yellow-500 text-gray-900 hover:bg-yellow-400' : 'bg-gray-800 text-yellow-400 hover:bg-gray-700'}`}
-             title="Mudar Tema"
-           >
+           <button onClick={toggleTheme} className={`p-3 rounded-full transition-all shadow-lg ${darkMode ? 'bg-yellow-500 text-gray-900 hover:bg-yellow-400' : 'bg-gray-800 text-yellow-400 hover:bg-gray-700'}`}>
              {darkMode ? (
                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
              ) : (
@@ -450,66 +473,55 @@ export default function YampiConverter() {
         </div>
 
         <div className={`max-w-7xl w-full p-8 rounded-2xl border transition-colors duration-300 ${cardBg}`}>
-          
           <div className="text-center mb-8">
-            <h1 className="text-4xl font-extrabold mb-2 bg-gradient-to-r from-blue-500 to-purple-600 bg-clip-text text-transparent">
-              Yampi2Bling
-            </h1>
-            <p className={`${textMuted}`}>Importação Yampi ➔ Cotação Frenet ➔ Exportação Bling</p>
+            <h1 className="text-4xl font-extrabold mb-2 bg-gradient-to-r from-blue-500 to-purple-600 bg-clip-text text-transparent">Yampi2Bling</h1>
+            <p className={`${textMuted}`}>Importação XLSX ➔ Cotação Frenet ➔ Exportação Bling</p>
           </div>
 
           <div className="mb-6">
             <label className={`group relative flex flex-col items-center justify-center w-full h-24 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-300 ${dropZoneBg}`}>
               <div className="flex flex-col items-center justify-center pt-2 pb-2">
                 <span className="text-2xl mb-1">📂</span>
-                <p className={`text-sm ${textMuted}`}>{fileName ? `Arquivo: ${fileName}` : "Carregar CSV da Yampi"}</p>
+                <p className={`text-sm ${textMuted}`}>{fileName ? `Arquivo: ${fileName}` : "Carregar Planilha Excel (.xlsx)"}</p>
               </div>
-              <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
+              <input type="file" accept=".xlsx, .xls" onChange={handleFileUpload} className="hidden" />
             </label>
           </div>
 
           {error && <div className="p-4 mb-6 bg-red-900/30 text-red-300 rounded-lg text-center">🚨 {error}</div>}
-          {loading && <p className="text-center text-blue-400 animate-pulse">Lendo arquivo...</p>}
+          {loading && <p className="text-center text-blue-400 animate-pulse">Lendo planilha...</p>}
 
           {jsonOutput && !loading && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
               
-              {/* ESTATÍSTICAS NO TOPO */}
+              {/* DASHBOARD */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                 {/* Card Financeiro */}
                  <div className={`rounded-xl border p-4 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200 shadow-sm'}`}>
                     <h3 className={`${textMuted} text-xs uppercase font-bold mb-3 border-b border-gray-600/30 pb-2`}>Resumo Financeiro</h3>
                     <div className="grid grid-cols-2 gap-4">
                        <div>
                           <p className={`text-xs ${textMuted}`}>Produtos</p>
-                          <p className={`text-lg font-bold ${textMain}`}>
-                             {stats.valorProdutos.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                          </p>
+                          <p className={`text-lg font-bold ${textMain}`}>{stats.valorProdutos.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
                        </div>
                        <div className="text-right">
                           <p className={`text-xs ${textMuted}`}>Frete Total</p>
-                          <p className={`text-lg font-bold ${textMain}`}>
-                             {stats.valorFrete.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                          </p>
+                          <p className={`text-lg font-bold ${textMain}`}>{stats.valorFrete.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
                        </div>
                        <div className="col-span-2 border-t pt-2 mt-1 border-gray-600/30">
                           <div className="flex justify-between items-end">
                              <div>
-                                <p className={`text-xs ${textMuted}`}>Total Pedidos</p>
+                                <p className={`text-xs ${textMuted}`}>Pedidos</p>
                                 <p className={`text-sm font-bold ${textMain}`}>{stats.totalPedidos}</p>
                              </div>
                              <div className="text-right">
                                 <p className={`text-xs ${textMuted}`}>Total Geral</p>
-                                <p className="text-2xl font-bold text-green-500">
-                                   {stats.valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                </p>
+                                <p className="text-2xl font-bold text-green-500">{stats.valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
                              </div>
                           </div>
                        </div>
                     </div>
                  </div>
 
-                 {/* Card Picking List */}
                  <div className={`rounded-xl border p-4 md:col-span-2 flex flex-col justify-between ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200 shadow-sm'}`}>
                     <div className="flex justify-between items-center mb-2">
                        <h3 className={`${textMuted} text-xs uppercase font-bold`}>Separação (Picking)</h3>
@@ -526,41 +538,36 @@ export default function YampiConverter() {
                  </div>
               </div>
 
-              {/* ÁREA DE COTAÇÃO FRENET */}
+              {/* COTAÇÃO */}
               {!freteCalculado ? (
                 <div className={`border p-8 rounded-xl text-center ${darkMode ? 'bg-indigo-900/20 border-indigo-500/30' : 'bg-indigo-50 border-indigo-100'}`}>
                    <h3 className="text-2xl font-bold text-indigo-500 mb-2">Cotação de Frete</h3>
-                   <p className={`${textMuted} mb-6`}>O sistema irá conectar com a Frenet para buscar os melhores preços para cada cliente.</p>
-                   
+                   <p className={`${textMuted} mb-6`}>Buscar melhores preços na Frenet.</p>
                    {!quoting ? (
-                       <button onClick={cotarFretes} className="bg-indigo-600 hover:bg-indigo-500 text-white text-lg font-bold py-3 px-8 rounded-lg shadow-lg shadow-indigo-500/30 transition-transform transform hover:scale-105">
-                           🚀 Iniciar Cotação Automática
-                       </button>
+                       <button onClick={cotarFretes} className="bg-indigo-600 hover:bg-indigo-500 text-white text-lg font-bold py-3 px-8 rounded-lg shadow-lg hover:scale-105 transition-transform">🚀 Iniciar Cotação</button>
                    ) : (
                        <div className="max-w-md mx-auto">
                           <div className={`w-full rounded-full h-4 mb-2 overflow-hidden ${darkMode ? 'bg-gray-700' : 'bg-gray-300'}`}>
-                             <div className="bg-indigo-500 h-4 rounded-full transition-all duration-300" style={{ width: `${quoteProgress}%` }}></div>
+                             <div className="bg-indigo-500 h-4 rounded-full transition-all" style={{ width: `${quoteProgress}%` }}></div>
                           </div>
-                          <p className="text-indigo-400 animate-pulse">Consultando transportadoras... {quoteProgress}%</p>
+                          <p className="text-indigo-400 animate-pulse">Cotando... {quoteProgress}%</p>
                        </div>
                    )}
                 </div>
               ) : (
-                /* TABELA DE GESTÃO DE FRETES */
                 <div className={`border rounded-xl overflow-hidden ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200 shadow-md'}`}>
                    <div className={`p-4 border-b flex justify-between items-center ${headerBg}`}>
                       <h3 className={`font-bold ${textMain} flex items-center gap-2`}>🚚 Gestão de Entregas</h3>
                       <span className="text-xs bg-green-500/20 text-green-600 px-2 py-1 rounded border border-green-500/30">Cotação Finalizada</span>
                    </div>
-                   
                    <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
                       <table className="w-full text-left border-collapse">
                          <thead className={`text-xs uppercase sticky top-0 z-10 ${tableHeaderBg}`}>
                             <tr>
                                <th className={`p-4 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>Pedido / Cliente</th>
                                <th className={`p-4 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>Destino</th>
-                               <th className={`p-4 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>Frete Yampi (Orig.)</th>
-                               <th className={`p-4 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'} w-1/3`}>Selecione o Frete (Frenet)</th>
+                               <th className={`p-4 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>Frete Original</th>
+                               <th className={`p-4 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'} w-1/3`}>Seleção Frenet</th>
                             </tr>
                          </thead>
                          <tbody className={`divide-y ${darkMode ? 'divide-gray-700' : 'divide-gray-200'}`}>
@@ -569,34 +576,25 @@ export default function YampiConverter() {
                                   <td className="p-4">
                                      <p className={`font-bold text-sm ${textMain}`}>{item.id}</p>
                                      <p className={`text-xs ${textMuted}`}>{item.cliente}</p>
-                                     <span className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-900 dark:text-blue-200 dark:border-blue-800">
-                                        {getProdutoBling(item.sku).nome}
-                                     </span>
+                                     <span className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-900 dark:text-blue-200 dark:border-blue-800">{getProdutoBling(item.sku).nome}</span>
                                   </td>
                                   <td className={`p-4 text-sm ${textMuted}`}>
                                      <p>{item.entrega_cidade} - {getUF(item.entrega_estado)}</p>
                                      <p className="text-xs opacity-75">{item.entrega_cep}</p>
                                   </td>
-                                  <td className={`p-4 text-sm ${textMuted}`}>
-                                     R$ {item.total_frete}
-                                     <br/><span className="text-[10px] opacity-75">{item.entrega}</span>
-                                  </td>
+                                  <td className={`p-4 text-sm ${textMuted}`}>R$ {item.total_frete}<br/><span className="text-[10px] opacity-75">{item.entrega}</span></td>
                                   <td className="p-4">
                                      {item.opcoes_frete ? (
                                         <select 
-                                           className={`w-full text-sm rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500 ${inputBg}`}
+                                           className={`w-full text-sm rounded-lg p-2.5 focus:ring-blue-500 ${inputBg}`}
                                            onChange={(e) => handleTrocaFrete(idx, parseInt(e.target.value))}
                                            value={item.opcoes_frete.findIndex((o: any) => o.ServiceDescription === item.frete_selecionado?.ServiceDescription)}
                                         >
                                            {item.opcoes_frete.map((op: any, i: number) => (
-                                              <option key={i} value={i}>
-                                                 {op.Carrier} ({op.ServiceDescription}) - R$ {op.ShippingPrice} {i === 0 ? '⭐ (Melhor)' : ''}
-                                              </option>
+                                              <option key={i} value={i}>{op.Carrier} ({op.ServiceDescription}) - R$ {op.ShippingPrice} {i === 0 ? '⭐' : ''}</option>
                                            ))}
                                         </select>
-                                     ) : (
-                                        <span className="text-red-500 text-xs font-bold">Erro na cotação</span>
-                                     )}
+                                     ) : <span className="text-red-500 text-xs font-bold">Erro na cotação</span>}
                                   </td>
                                </tr>
                             ))}
@@ -606,27 +604,16 @@ export default function YampiConverter() {
                 </div>
               )}
 
-              {/* BOTÕES DE AÇÃO FINAL */}
               <div className={`p-6 rounded-xl border ${darkMode ? 'bg-gray-800/50 border-gray-700' : 'bg-gray-50 border-gray-200'}`}>
-                <button
-                    onClick={gerarXlsBling}
-                    disabled={!freteCalculado}
-                    className={`w-full mb-4 flex items-center justify-center gap-3 font-bold py-4 px-6 rounded-xl transition-all transform hover:scale-[1.01] shadow-xl ${freteCalculado ? 'bg-green-600 hover:bg-green-500 text-white shadow-green-500/30 border border-green-500' : 'bg-gray-400 text-gray-200 cursor-not-allowed'}`}
-                >
+                <button onClick={gerarXlsBling} disabled={!freteCalculado} className={`w-full mb-4 flex items-center justify-center gap-3 font-bold py-4 px-6 rounded-xl transition-all shadow-xl ${freteCalculado ? 'bg-green-600 hover:bg-green-500 text-white shadow-green-500/30 border border-green-500' : 'bg-gray-400 text-gray-200 cursor-not-allowed'}`}>
                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                     {freteCalculado ? 'Aprovar e Baixar Planilha Bling' : 'Cote os Fretes para Baixar'}
                 </button>
-
                 <div className="flex gap-4">
-                  <button onClick={downloadJson} className={`flex-1 py-3 rounded-lg text-sm border transition-colors ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-300 border-gray-600' : 'bg-white hover:bg-gray-50 text-gray-600 border-gray-300'}`}>
-                    Baixar Backup JSON
-                  </button>
-                  <button onClick={copyToClipboard} className={`flex-1 py-3 rounded-lg text-sm border transition-colors ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-300 border-gray-600' : 'bg-white hover:bg-gray-50 text-gray-600 border-gray-300'}`}>
-                    {copied ? "✅ Copiado!" : "📋 Copiar JSON"}
-                  </button>
+                  <button onClick={downloadJson} className={`flex-1 py-3 rounded-lg text-sm border transition-colors ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-300 border-gray-600' : 'bg-white hover:bg-gray-50 text-gray-600 border-gray-300'}`}>Baixar Backup JSON</button>
+                  <button onClick={copyToClipboard} className={`flex-1 py-3 rounded-lg text-sm border transition-colors ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-300 border-gray-600' : 'bg-white hover:bg-gray-50 text-gray-600 border-gray-300'}`}>{copied ? "✅ Copiado!" : "📋 Copiar JSON"}</button>
                 </div>
               </div>
-
             </div>
           )}
         </div>
