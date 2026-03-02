@@ -6,6 +6,6 @@
 
 export const DEVELOPER_INFO = {
   name: "Rian Arcanjo",
-  linkedin: "linkedin.com/in/rian-a-oliveira?originalSubdomain=br",
+  linkedin: "https://www.linkedin.com/in/rian-a-oliveira/",
   github: "https://github.com/RainArcanjo/"
 };
